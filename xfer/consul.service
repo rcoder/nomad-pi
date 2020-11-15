@@ -1,0 +1,19 @@
+[Unit]
+Description=Consul
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=consul
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStart=/opt/local/bin/consul agent -server -config-dir /etc/consul.d
+KillMode=process
+KillSignal=SIGINT
+LimitNOFILE=infinity
+LimitNPROC=infinity
+Restart=on-failure
+RestartSec=5
+TasksMax=infinity
+
+[Install]
+WantedBy=multi-user.target

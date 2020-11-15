@@ -1,0 +1,223 @@
+#!/usr/bin/env ruby
+
+# This script is a big ol' mess, but at least it isn't bash.
+
+require 'yaml'
+require 'optparse'
+require 'base64'
+require 'date'
+require 'io/console'
+
+def get_options
+  options = Options.new("1.0.0-beta3")
+  use_wifi = false
+
+  optparse = OptionParser.new do |op|
+    op.banner = "Usage: create-config [options]"
+    was_err = false
+
+    op.on(
+      "-h",
+      "--hostname NAME",
+      "Hostname (required)"
+    ) do |h|
+      options.hostname = h
+    end
+
+    op.on(
+      "-g",
+      "--github USER",
+      <<-END
+GitHub user to use for SSH public key import (no local keys will be imported if provided)
+      END
+    ) do |s|
+      options.github_user = s
+    end
+
+    op.on(
+      "-v",
+      "--version version",
+      "Binary version to download"
+    ) do |v|
+      options.version = v
+    end
+
+    op.on("-w", "--wifi", "Prompt for Wifi options") { use_wifi = true }
+
+    if was_err then exit 1 end
+  end
+
+  optparse.parse!
+
+  errors = []
+
+  if options.hostname.nil?
+    errors << "Missing hostname."
+  end
+
+  if options.github_user && options.github_user =~ /my-gh-user/
+    errors << "Please provide your actual GitHub username, not the example from the README. ;)"
+  end
+
+  unless errors.empty?
+    STDERR.puts("Bad arguments:")
+    errors.each {|err| STDERR.puts("- #{err}") }
+    exit 1
+  end
+
+  if use_wifi
+    STDERR.print "Network SSID: "
+    ssid = gets.strip
+    STDERR.print "Password: "
+    password = STDIN.noecho(&:gets).strip
+    options.wifi = { "ssid" => ssid, "password" => password }
+  end
+
+  options
+end
+
+def make_cloud_config(options, ssh_pubkey=nil)
+  {
+    "hostname" => options.hostname,
+    "ssh_pwauth" => false,
+    "manage_etc_hosts" => true,
+    "groups" => ["docker"],
+    "users" => [
+      {
+        "name" => "ubuntu",
+        "active" => false
+      },
+      {
+        "name" => "consul",
+        "system" => true,
+        "homedir" => "/opt/consul",
+        "no_create_home" => true,
+        "no_user_group" => true
+      },
+      {
+        "name" => "nomad",
+        "primary-group" => "users",
+        "shell" => "/bin/bash",
+        "sudo" => "ALL=(ALL) NOPASSWD: ALL",
+        "groups" => ["users", "adm", "dialout", "netdev", "docker"],
+        "ssh-import-id" => options.github_user ? ["gh:#{options.github_user}"] : [],
+        "ssh-authorized-keys" => [ssh_pubkey].compact
+      }
+    ],
+    # sigh...no wifi yet, so no package install for you
+    #"packages" => [
+    #  "avahi-daemon",
+    #  "docker.io",
+    #  "unzip"
+    #],
+    "package_update" => true,
+    "package_upgrade" => true,
+    "write_files" => [
+      include_file(
+        "./xfer/hashistack-initial-setup.service",
+        "/etc/systemd/system/hashistack-initial-setup.service"
+      ),
+      include_file(
+        "./xfer/consul.service",
+        "/etc/systemd/system/consul.service"
+      ),
+      include_file(
+        "./xfer/nomad.service",
+        "/etc/systemd/system/nomad.service"
+      ),
+      include_file(
+        "./xfer/nomad.hcl",
+        "/etc/nomad.d/nomad.hcl"
+      ),
+      include_file(
+        "./xfer/consul.hcl",
+        "/etc/consul.d/consul.hcl"
+      ),
+      include_file(
+        "./xfer/install-stack.sh",
+        "/opt/local/bin/install-stack.sh",
+        {
+          "@@nomad_url@@" => download_url(options.version),
+          "@@consul_url@@" =>
+            "https://releases.hashicorp.com/consul/1.8.5/consul_1.8.5_linux_arm64.zip",
+          "@@time@@" => DateTime.now.to_s
+        }
+      ).merge({
+        "permissions" => "0755"
+      }),
+      # these two includes are kind of a hot mess, but the cloud-init authors 
+      # apparently decided wifi wasn't something anyone would ever want a 
+      # "server" to have or use, so...
+      options.wifi && include_file(
+        "./xfer/wifi-netplan.yaml",
+        "/etc/netplan/75-wifi-preconf.yaml",
+        {
+          "@@ssid@@" => options.wifi["ssid"],
+          "@@password@@" => options.wifi["password"]
+        }
+      ),
+      include_file(
+        "./xfer/fix-netplan.cfg",
+        "/etc/cloud/cloud.cfg.d/99-disable-auto-config.cfg"
+      )
+    ],
+    "network" => {
+      "version" => 2,
+      "renderer" => "networkd",
+      "ethernets" => {
+        "eth0" => {
+          "optional" => true,
+          "dhcp4" => true,
+          "critical" => true
+        }
+      }
+    },
+    "power_state" => {
+      "delay" => "+2",
+      "mode" => "reboot"
+    },
+    "runcmd" => [
+      "systemctl start hashistack-initial-setup"
+    ]
+  }
+end
+
+def include_file(local_path, target_path, replacements={})
+  content = File.read(local_path)
+  replacements.each {|var, val| content.gsub!(var, val) }
+
+  {
+    "path" => target_path,
+    "encoding" => "b64",
+    "content" => Base64::encode64(content)
+  }
+end
+
+Options = Struct.new(:version, :hostname, :wifi, :github_user)
+
+def get_ssh_pubkey
+  ["ed25519", "rsa"].each do |keytype|
+    key_path = "#{ENV['HOME']}/.ssh/id_#{keytype}.pub"
+    if File.exists?(key_path)
+      return File.read(key_path).strip
+    end
+  end
+  nil
+end
+
+def download_url(version)
+  "https://releases.hashicorp.com/nomad/#{version}/nomad_#{version}_linux_arm64.zip"
+end
+
+options = get_options
+config = make_cloud_config(options, get_ssh_pubkey)
+output_path = "./generated/#{options.hostname}.yaml"
+
+open(output_path, "w") do |fh|
+  fh.puts "#cloud-config"
+  fh.puts YAML.dump(config)
+end
+
+puts "Saved user-data config to #{output_path}."
+puts "To flash to SD:"
+puts "  ./flash -u #{output_path} <image-file>"
