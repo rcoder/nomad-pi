@@ -2,7 +2,7 @@ datacenter = "homelab"
 data_dir = "/opt/consul"
 
 server = true
-boostrap_expect = 3
+bootstrap_expect = 3
 
 advertise_addr = "{{ GetAllInterfaces | include \"flags\" \"forwardable|up\" | attr \"address\" }}"
 

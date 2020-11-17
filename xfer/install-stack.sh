@@ -12,7 +12,7 @@ fi
 
 set -ex
 
-apt install avahi-daemon docker.io unzip
+apt install -y avahi-daemon docker.io unzip
 
 mkdir -p /opt/local/bin
 mkdir -p /etc/consul.d

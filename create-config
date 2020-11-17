@@ -67,7 +67,7 @@ GitHub user to use for SSH public key import (no local keys will be imported if 
 
   if use_wifi
     STDERR.print "Network SSID: "
-    ssid = gets.strip
+    ssid = STDIN.gets.strip
     STDERR.print "Password: "
     password = STDIN.noecho(&:gets).strip
     options.wifi = { "ssid" => ssid, "password" => password }
