@@ -32,5 +32,5 @@ Once the above completes, you can remove the card, put it in the RPi, and power 
 
 After it comes back up from the install/configure steps the RPi will advertise its hostname via mDNS, so you should be able to just run `ssh nomad@<hostname-from-config>.local` and log in. Nomad and Consul should all be happily running in the `homelab` datacenter.
 
-There are additional options available; to see help, run `create-config` without any arguments. Note: if you specify a GitHub username, public keys from that account will be copied to the nomad user's `authorized_keys` file; otherwise, the script will attempt to find a public key in your local `$HOME/.ssh` directory. Failing that, it will import nothing and you'll be unable to log in at all. (Sorry, but passwords are just no fun to generate, hash, update, etc. PRs welcome if you disagree.)
+There are additional options available; to see help, run `create-config --help`. Note: if you specify a GitHub username, public keys from that account will be copied to the nomad user's `authorized_keys` file; otherwise, the script will attempt to find a public key in your local `$HOME/.ssh` directory. Failing that, it will import nothing and you'll be unable to log in at all. (Sorry, but passwords are just no fun to generate, hash, update, etc. PRs welcome if you disagree.)
 
